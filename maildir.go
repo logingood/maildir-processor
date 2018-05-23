@@ -2,11 +2,12 @@ package maildir_processor
 
 import (
 	"fmt"
+	"github.com/DataDog/datadog-go/statsd"
 	"github.com/flashmob/go-guerrilla/backends"
 	"github.com/flashmob/go-guerrilla/mail"
 	"github.com/flashmob/go-guerrilla/response"
-	_ "github.com/sloonz/go-maildir"
 	"github.com/flashmob/go-maildir"
+	_ "github.com/sloonz/go-maildir"
 	"os"
 	"os/user"
 	"strconv"
@@ -32,6 +33,14 @@ type MailDir struct {
 	userMap map[string][]int
 	dirs    map[string]*maildir.Maildir
 	config  *maildirConfig
+}
+
+func sendToDD(metric string, tags []string) {
+	c, _ := statsd.New("127.0.0.1:8125")
+	c.Namespace = "guerrillad."
+	c.Tags = tags
+
+	_ = c.Incr(metric, tags, 1.0)
 }
 
 // check to see if we have configured
@@ -162,9 +171,7 @@ var Processor = func() backends.Decorator {
 				if size := len(e.RcptTo); size > 0 {
 					if err := m.validateRcpt(&e.RcptTo[size-1]); err != nil {
 						backends.Log().WithError(backends.NoSuchUser).Info("recipient not configured: ", e.RcptTo[size-1].User)
-						return backends.NewResult(
-							response.Canned.FailRcptCmd),
-							backends.NoSuchUser
+						return backends.NewResult(response.Canned.FailRcptCmd), backends.NoSuchUser
 					}
 
 				}
@@ -181,6 +188,8 @@ var Processor = func() backends.Decorator {
 						backends.Log().WithError(err).Error("Could not save email")
 						return backends.NewResult(fmt.Sprintf("554 Error: could not save email for [%s]", u)), err
 					} else {
+						tags := []string{fmt.Sprintf("in_rcpt:%s", e.RcptTo[i].User)}
+						sendToDD("delivered", tags)
 						backends.Log().Debug("saved email as", filename)
 					}
 				}
