@@ -47,7 +47,6 @@ func sendToDD(metric string, tags []string) {
 }
 
 func trainRspamd(buf io.Reader, rspamdFuzzyEndpoint string, rspamdFuzzyPassword string) error {
-
 	req, err := http.NewRequest("POST", rspamdFuzzyEndpoint, buf)
 	req.Header.Add("Password", rspamdFuzzyPassword)
 	req.Header.Add("Flag", `11`)
@@ -64,11 +63,12 @@ func trainRspamd(buf io.Reader, rspamdFuzzyEndpoint string, rspamdFuzzyPassword 
 
 	if resp.StatusCode != 200 {
 		err := errors.New(fmt.Sprintf("Rspamd training error - %s: %s", resp.Body, resp.Status))
-		sendToDD("fuzzy.error", tags)
+		sendToDD("fuzzy.error", []string{})
 		return err
 	}
 
-	sendToDD("fuzzy.trained", tags)
+	backends.Log().Info("Fuzzy storage has been trained succesfully: ", resp.Status)
+	sendToDD("fuzzy.trained", []string{})
 
 	return nil
 }
@@ -221,6 +221,8 @@ var Processor = func() backends.Decorator {
 					if err != nil {
 						backends.Log().WithError(err).Error("Could train rspamd")
 						return backends.NewResult(fmt.Sprintf("554 Error: could not train rspamd for [%s]", u)), err
+					} else {
+						backends.Log().Info("Trained rspamd using email", e.RcptTo[i].User)
 					}
 
 					if filename, err := mdir.CreateMail(rdr); err != nil {
