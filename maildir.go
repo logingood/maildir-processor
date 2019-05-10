@@ -64,8 +64,11 @@ func trainRspamd(buf io.Reader, rspamdFuzzyEndpoint string, rspamdFuzzyPassword 
 
 	if resp.StatusCode != 200 {
 		err := errors.New(fmt.Sprintf("Rspamd training error - %s: %s", resp.Body, resp.Status))
+		sendToDD("fuzzy.error", tags)
 		return err
 	}
+
+	sendToDD("fuzzy.trained", tags)
 
 	return nil
 }
