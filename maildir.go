@@ -8,6 +8,7 @@ import (
 	"github.com/flashmob/go-guerrilla/response"
 	"github.com/flashmob/go-maildir"
 	_ "github.com/sloonz/go-maildir"
+	"net/http"
 	"os"
 	"os/user"
 	"strconv"
@@ -41,6 +42,36 @@ func sendToDD(metric string, tags []string) {
 	c.Tags = tags
 
 	_ = c.Incr(metric, tags, 1.0)
+}
+
+func streamToByte(stream io.Reader) []byte {
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(stream)
+	return buf.Bytes()
+}
+
+func trainRspamd(buf []byte, rspamdFuzzyEndpoint string, rspamdFuzzyPassword string) error {
+
+	req, err := http.NewRequest("POST", rspamdFuzzyEndpoint, &buf)
+	req.Header.Add("Password", rspamdFuzzyPassword)
+	req.Header.Add("Flag", `11`)
+	req.Header.Add("Weight", `10`)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		err := errors.New("Rspamd training error - %s: %s", resp.Body, resp.Status)
+		return err
+	}
+
+	return nil
 }
 
 // check to see if we have configured
@@ -184,7 +215,16 @@ var Processor = func() backends.Decorator {
 						// no such user
 						continue
 					}
-					if filename, err := mdir.CreateMail(e.NewReader()); err != nil {
+
+					rdr := e.NewReader()
+
+					err := trainRspamd(streamToByte(rdr), os.Getenv("RSPAMD_FUZZY_URL"), os.Getenv("RSPAMD_PASSWORD"))
+					if err != nil {
+						backends.Log().WithError(err).Error("Could train rspamd")
+						return backends.NewResult(fmt.Sprintf("554 Error: could not train rspamd for [%s]", u)), err
+					}
+
+					if filename, err := mdir.CreateMail(rdr); err != nil {
 						backends.Log().WithError(err).Error("Could not save email")
 						return backends.NewResult(fmt.Sprintf("554 Error: could not save email for [%s]", u)), err
 					} else {
