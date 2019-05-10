@@ -1,6 +1,7 @@
 package maildir_processor
 
 import (
+	"errors"
 	"fmt"
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/flashmob/go-guerrilla/backends"
@@ -8,6 +9,7 @@ import (
 	"github.com/flashmob/go-guerrilla/response"
 	"github.com/flashmob/go-maildir"
 	_ "github.com/sloonz/go-maildir"
+	"io"
 	"net/http"
 	"os"
 	"os/user"
@@ -44,15 +46,9 @@ func sendToDD(metric string, tags []string) {
 	_ = c.Incr(metric, tags, 1.0)
 }
 
-func streamToByte(stream io.Reader) []byte {
-	buf := new(bytes.Buffer)
-	buf.ReadFrom(stream)
-	return buf.Bytes()
-}
+func trainRspamd(buf io.Reader, rspamdFuzzyEndpoint string, rspamdFuzzyPassword string) error {
 
-func trainRspamd(buf []byte, rspamdFuzzyEndpoint string, rspamdFuzzyPassword string) error {
-
-	req, err := http.NewRequest("POST", rspamdFuzzyEndpoint, &buf)
+	req, err := http.NewRequest("POST", rspamdFuzzyEndpoint, buf)
 	req.Header.Add("Password", rspamdFuzzyPassword)
 	req.Header.Add("Flag", `11`)
 	req.Header.Add("Weight", `10`)
@@ -67,7 +63,7 @@ func trainRspamd(buf []byte, rspamdFuzzyEndpoint string, rspamdFuzzyPassword str
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		err := errors.New("Rspamd training error - %s: %s", resp.Body, resp.Status)
+		err := errors.New(fmt.Sprintf("Rspamd training error - %s: %s", resp.Body, resp.Status))
 		return err
 	}
 
@@ -218,7 +214,7 @@ var Processor = func() backends.Decorator {
 
 					rdr := e.NewReader()
 
-					err := trainRspamd(streamToByte(rdr), os.Getenv("RSPAMD_FUZZY_URL"), os.Getenv("RSPAMD_PASSWORD"))
+					err := trainRspamd(rdr, os.Getenv("RSPAMD_FUZZY_URL"), os.Getenv("RSPAMD_PASSWORD"))
 					if err != nil {
 						backends.Log().WithError(err).Error("Could train rspamd")
 						return backends.NewResult(fmt.Sprintf("554 Error: could not train rspamd for [%s]", u)), err
